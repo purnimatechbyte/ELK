@@ -1,0 +1,102 @@
+flowchart TD
+    A(["👤 Client\nInitiates Session"]) --> B
+
+    subgraph STEP1["STEP 1 — Authentication"]
+        B["Login via SSO\nCloud IAP + OAuth2"]
+    end
+
+    subgraph STEP2["STEP 2 — Report Selection"]
+        C["Browse Report Catalogue"]
+        D["Select Report"]
+        E["Apply Filters\n(Date Range, Account Status,\nSegment, Region etc.)"]
+    end
+
+    subgraph STEP3["STEP 3 — UI Validation"]
+        F{"UI Input\nValidation"}
+        F_FAIL["Show Validation\nErrors to User"]
+        F_PASS["Report Request\nReady"]
+    end
+
+    subgraph STEP4["STEP 4 — Request Dispatch"]
+        G["Build Report Request Payload\n─────────────────────────\n• Report Identifier\n• User-Selected Filters\n• Security Context\n  (Role, Mandate,\n   Permitted Accounts)"]
+        H["Send to\nOrchestration Layer\nvia Apigee Gateway\n(OAuth2 JWT validated)"]
+    end
+
+    subgraph STEP5["STEP 5 — Orchestration Layer\n(Traffic Controller — No Business Logic)"]
+        I["Validate Request\nStructure & Schema"]
+        J["Evaluate User\nAccess & Authority\n(Role + Mandate check)"]
+        K{"Authorised?"}
+        K_DENY["Return 403\nAccess Denied"]
+        L["Determine\nExecution Mode\n(On-demand / Scheduled)"]
+    end
+
+    subgraph STEP6["STEP 6 — Semantic Layer\n(Business Logic Engine)"]
+        M["Resolve Report Contract\n(Identify correct\nreport definition)"]
+        N["Apply Business Logic\n(Domain entities,\nmetrics, calculations)"]
+        O["Enforce Field Definitions\n(Consistent metric\ndefinitions across reports)"]
+        P["Build Semantic Query\n(Tool-agnostic\ndata requirements)"]
+    end
+
+    subgraph STEP7["STEP 7 — Data Warehouse\n(BigQuery — GCP)"]
+        Q["Execute Optimised Query\nagainst Curated\nDenormalised Datasets\n(Partition-aware,\nretention-aware)"]
+        R["BigQuery Returns\nFiltered Report-Ready\nDataset"]
+    end
+
+    subgraph STEP8["STEP 8 — Semantic Response"]
+        S["Apply Final\nBusiness Definitions"]
+        T["Validate\nMetric Correctness"]
+        U2["Return Semantic\nResponse to Orchestration\n(Business-correct data)"]
+    end
+
+    subgraph STEP9["STEP 9 — Orchestration Rendering Prep\n(No Business Logic)"]
+        V["Apply Pagination\n& Sorting Rules"]
+        W["Handle Scheduling\nLogic if applicable"]
+        X["Select Renderer\nvia Adapter\n(PDF or CSV)"]
+    end
+
+    subgraph STEP10["STEP 10 — Renderer Layer"]
+        Y["Load Layout\nTemplate\n(JRXML / HTML)"]
+        Z1["Generate PDF\n(JasperReports / iText)"]
+        Z2["Generate CSV\n(Apache POI)"]
+        AA["Store in\nCloud Storage (GCS)\nGenerate Signed URL"]
+    end
+
+    subgraph STEP11["STEP 11 — Report Delivery"]
+        BB["Orchestration\nReceives Signed URL"]
+        CC["Return Report\nArtifact to UI"]
+        DD["UI Presents\nDownload to Client"]
+    end
+
+    EE(["✅ Client\nDownloads Report\nJourney Complete"])
+
+    %% Main Flow
+    A --> B --> C --> D --> E --> F
+    F -->|"❌ Invalid"| F_FAIL
+    F_FAIL --> E
+    F -->|"✅ Valid"| F_PASS
+    F_PASS --> G --> H
+    H --> I --> J --> K
+    K -->|"❌ Denied"| K_DENY
+    K -->|"✅ Authorised"| L
+    L --> M --> N --> O --> P
+    P --> Q --> R
+    R --> S --> T --> U2
+    U2 --> V --> W --> X
+    X --> Y
+    Y --> Z1
+    Y --> Z2
+    Z1 --> AA
+    Z2 --> AA
+    AA --> BB --> CC --> DD --> EE
+
+    %% Styles
+    classDef stepBox fill:#E8EAF6,stroke:#3949AB,color:#1A237E,font-weight:bold
+    classDef decision fill:#FFF8E1,stroke:#F9A825,color:#E65100,font-weight:bold
+    classDef deny fill:#FFEBEE,stroke:#C62828,color:#B71C1C,font-weight:bold
+    classDef success fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20,font-weight:bold
+    classDef terminal fill:#E0F2F1,stroke:#00695C,color:#004D40,font-weight:bold
+
+    class F decision
+    class K decision
+    class F_FAIL,K_DENY deny
+    class F_PASS,EE success
