@@ -1,0 +1,50 @@
+sequenceDiagram
+    autonumber
+    actor Client as 👤 CBO User
+    participant UI as 🖥️ Reporting UI<br/>(React)
+    participant GW as 🔐 Apigee Gateway
+    participant ORCH as ⚙️ Orchestration Layer
+    participant SEM as 🧠 Semantic Layer
+    participant DWH as 🗄️ BigQuery<br/>Data Warehouse
+    participant REND as 🖨️ Renderer
+    participant GCS as ☁️ Cloud Storage<br/>(GCS)
+
+    Client->>UI: Login + Select Report<br/>+ Apply Filters
+    UI->>UI: Validate inputs<br/>(mandatory fields, format)
+    UI->>GW: POST /api/v1/reports/{id}/run<br/>{ reportId, filters, securityContext }
+    GW->>GW: Validate OAuth2 JWT<br/>Apply rate limit + audit log
+    GW->>ORCH: Forward authenticated request
+
+    Note over ORCH: Traffic Controller<br/>No business logic or SQL
+
+    ORCH->>ORCH: Validate request schema
+    ORCH->>ORCH: Evaluate user role,<br/>mandate & permitted accounts
+    ORCH->>ORCH: Determine execution mode<br/>(on-demand / scheduled)
+    ORCH->>SEM: Send report contract request<br/>{ reportId, authorisedFilters, userContext }
+
+    Note over SEM: Business Logic Engine<br/>Resolves meaning, metrics & domain
+
+    SEM->>SEM: Resolve report contract definition
+    SEM->>SEM: Apply business logic<br/>(domain entities, calculations)
+    SEM->>SEM: Enforce consistent<br/>field & metric definitions
+    SEM->>DWH: Execute semantic query<br/>against curated Gold datasets
+
+    Note over DWH: Curated denormalised datasets<br/>Partition-aware, retention-aware<br/>Unified legacy + GCP journeys
+
+    DWH-->>SEM: Return filtered,<br/>partition-aware report-ready dataset
+    SEM->>SEM: Apply final business definitions<br/>Validate metric correctness
+    SEM-->>ORCH: Return semantic response<br/>(business-correct structured data)
+
+    Note over ORCH: Rendering Prep<br/>No business logic or SQL
+
+    ORCH->>ORCH: Apply pagination & sorting rules
+    ORCH->>ORCH: Handle scheduling logic
+    ORCH->>REND: Send data + renderer config<br/>(PDF or CSV adapter selected)
+
+    Note over REND: Rendering is isolated<br/>from all business concerns
+
+    REND->>REND: Load layout template<br/>(JRXML / HTML)
+    REND->>REND: Generate report artifact<br/>(PDF / CSV)
+    REND->>GCS: Store report artifact
+    GCS-->>REND: Return Signed URL<br/>(time-limited)
+    REND-->>
