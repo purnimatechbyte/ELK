@@ -1,6 +1,6 @@
 sequenceDiagram
     autonumber
-    actor Client as 👤 CBO User
+    actor Client as 👤  User
     participant UI as 🖥️ Reporting UI<br/>(React)
     participant GW as 🔐 Apigee Gateway
     participant ORCH as ⚙️ Orchestration Layer
