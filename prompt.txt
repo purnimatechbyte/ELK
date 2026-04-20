@@ -1,0 +1,287 @@
+
+```
+You are a senior Java architect building a production-grade, 
+cloud-native Report Generation Microservice for a banking 
+reporting platform deployed on GCP.
+
+The service fetches financial transaction data from Google BigQuery, 
+passes it through a pluggable, adapter-driven renderer pipeline, 
+and produces downloadable report artifacts (PDF, CSV — extensible 
+to future formats like XLSX, JSON, HTML).
+
+The design must strictly follow and give comments in all files to understand the code and create detailed read me document detailing step by step process to run the code and setup:
+  - SOLID Principles throughout every class
+  - Strategy Pattern      → for swappable renderers
+  - Factory Pattern       → for renderer selection
+  - Adapter Pattern       → for output format adapters
+  - Template Method       → for common rendering pipeline steps
+  - Builder Pattern       → for constructing report requests/responses
+  - Chain of Responsibility → for pre-render data processors
+  - Dependency Injection  → Spring-managed beans, no manual instantiation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — PROJECT BOOTSTRAP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create a Spring Boot 3.x project with:
+
+  Group ID    : com.app.reporting
+  Artifact ID : app-report-generator
+  Java Version: 21
+  Port        : 8085
+
+Maven Dependencies (pom.xml):
+
+  <!-- Core -->
+  spring-boot-starter-web
+  spring-boot-starter-validation
+  spring-boot-starter-actuator
+  spring-boot-starter-security
+
+  <!-- BigQuery -->
+  com.google.cloud:google-cloud-bigquery:2.38.2
+  com.google.cloud:google-cloud-storage:2.36.0
+  com.google.auth:google-auth-library-oauth2-http:1.23.0
+
+  <!-- PDF Rendering -->
+  net.sf.jasperreports:jasperreports:6.21.0
+  net.sf.jasperreports:jasperreports-fonts:6.21.0
+  com.itextpdf:itext7-core:7.2.5
+
+  <!-- CSV Rendering -->
+  com.opencsv:opencsv:5.9
+  org.apache.poi:poi-ooxml:5.2.5
+
+  <!-- API Docs -->
+  org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0
+
+  <!-- Utilities -->
+  org.projectlombok:lombok
+  org.mapstruct:mapstruct:1.5.5.Final
+
+  <!-- Testing -->
+  spring-boot-starter-test
+  org.mockito:mockito-core
+  com.google.cloud:google-cloud-bigquery:test-jar (for emulator)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — FULL PROJECT STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate the complete directory and package structure:
+
+app-report-generator/
+├── src/
+│   ├── main/
+│   │   ├── java/com/app/reporting/generator/
+│   │   │   │
+│   │   │   ├── appReportGeneratorApplication.java
+│   │   │   │
+│   │   │   ├── controller/
+│   │   │   │   └── ReportGeneratorController.java
+│   │   │   │
+│   │   │   ├── model/
+│   │   │   │   ├── request/
+│   │   │   │   │   ├── ReportGenerateRequest.java
+│   │   │   │   │   ├── ReportFilter.java
+│   │   │   │   │   └── OutputFormat.java            ← enum
+│   │   │   │   │
+│   │   │   │   ├── response/
+│   │   │   │   │   ├── ReportGenerateResponse.java
+│   │   │   │   │   └── ReportStatus.java            ← enum
+│   │   │   │   │
+│   │   │   │   └── domain/
+│   │   │   │       ├── TransactionRecord.java       ← domain entity
+│   │   │   │       ├── ReportDataset.java           ← wrapper for rows
+│   │   │   │       └── FieldDefinition.java         ← schema per field
+│   │   │   │
+│   │   │   ├── bigquery/
+│   │   │   │   ├── BigQueryDataFetcher.java         ← interface (ISP)
+│   │   │   │   ├── BigQueryDataFetcherImpl.java     ← implementation
+│   │   │   │   ├── BigQueryQueryBuilder.java        ← builds SQL queries
+│   │   │   │   └── BigQueryResultMapper.java        ← maps results to domain
+│   │   │   │
+│   │   │   ├── pipeline/
+│   │   │   │   ├── ReportPipeline.java              ← Template Method (abstract)
+│   │   │   │   ├── StandardReportPipeline.java      ← concrete implementation
+│   │   │   │   │
+│   │   │   │   └── processor/                       ← Chain of Responsibility
+│   │   │   │       ├── DataProcessor.java           ← interface
+│   │   │   │       ├── DataProcessorChain.java      ← chain runner
+│   │   │   │       ├── SortingProcessor.java        ← sorts dataset
+│   │   │   │       ├── FilterProcessor.java         ← applies filters
+│   │   │   │       ├── PaginationProcessor.java     ← paginates data
+│   │   │   │       └── NullValueProcessor.java      ← handles nulls/blanks
+│   │   │   │
+│   │   │   ├── renderer/
+│   │   │   │   ├── RendererAdapter.java             ← Strategy interface (OCP)
+│   │   │   │   ├── RendererAdapterFactory.java      ← Factory (selects adapter)
+│   │   │   │   ├── AbstractRendererAdapter.java     ← Template Method base
+│   │   │   │   │
+│   │   │   │   ├── pdf/
+│   │   │   │   │   ├── PdfRendererAdapter.java
+│   │   │   │   │   ├── JasperReportEngine.java
+│   │   │   │   │   ├── JasperTemplateLoader.java
+│   │   │   │   │   └── JasperDataSourceBuilder.java
+│   │   │   │   │
+│   │   │   │   └── csv/
+│   │   │   │       ├── CsvRendererAdapter.java
+│   │   │   │       └── CsvWriterEngine.java
+│   │   │   │
+│   │   │   ├── storage/
+│   │   │   │   ├── ReportStorageService.java        ← interface (ISP)
+│   │   │   │   ├── GcsReportStorageService.java     ← GCS implementation
+│   │   │   │   └── SignedUrlGenerator.java          ← GCS signed URL util
+│   │   │   │
+│   │   │   ├── service/
+│   │   │   │   └── ReportGeneratorService.java      ← orchestrates the flow
+│   │   │   │
+│   │   │   ├── exception/
+│   │   │   │   ├── ReportGenerationException.java
+│   │   │   │   ├── DataFetchException.java
+│   │   │   │   ├── RendererException.java
+│   │   │   │   ├── StorageException.java
+│   │   │   │   └── GlobalExceptionHandler.java
+│   │   │   │
+│   │   │   └── config/
+│   │   │       ├── BigQueryConfig.java
+│   │   │       ├── GcsConfig.java
+│   │   │       ├── SecurityConfig.java
+│   │   │       └── OpenApiConfig.java
+│   │   │
+│   │   └── resources/
+│   │       ├── application.yml
+│   │       ├── application-local.yml
+│   │       ├── application-gcp.yml
+│   │       └── templates/
+│   │           └── reports/
+│   │               └── app_transaction_report.jrxml
+│   │
+│   └── test/
+│       └── java/com/app/reporting/generator/
+│           ├── controller/
+│           │   └── ReportGeneratorControllerTest.java
+│           ├── service/
+│           │   └── ReportGeneratorServiceTest.java
+│           ├── bigquery/
+│           │   ├── BigQueryDataFetcherTest.java
+│           │   └── BigQueryQueryBuilderTest.java
+│           ├── pipeline/
+│           │   └── StandardReportPipelineTest.java
+│           ├── renderer/
+│           │   ├── PdfRendererAdapterTest.java
+│           │   └── CsvRendererAdapterTest.java
+│           └── fixture/
+│               └── TransactionDataFixture.java      ← mock data factory
+│
+├── Dockerfile
+├── k8s/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── hpa.yaml
+│   └── configmap.yaml
+└── pom.xml
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — BIGQUERY DATASET & SCHEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The service fetches data from a BigQuery table with this schema:
+
+  Dataset  : app_reporting
+  Table    : transaction_records
+
+  Schema:
+  ┌────────────────────┬─────────────┬──────────────────────────────┐
+  │ Column Name        │ BQ Type     │ Description                  │
+  ├────────────────────┼─────────────┼──────────────────────────────┤
+  │ transaction_id     │ STRING      │ Unique transaction reference  │
+  │ posting_date       │ DATE        │ Date transaction was posted   │
+  │ account_type       │ STRING      │ CURRENT / SAVINGS / BUSINESS │
+  │ transaction_amount │ NUMERIC     │ Amount in GBP (can be -ve)   │
+  │ transaction_type   │ STRING      │ CREDIT / DEBIT               │
+  │ account_number     │ STRING      │ Masked account number         │
+  │ description        │ STRING      │ Transaction narrative         │
+  │ currency_code      │ STRING      │ ISO 4217 — GBP, USD, EUR     │
+  │ status             │ STRING      │ CLEARED / PENDING / REVERSED │
+  │ created_at         │ TIMESTAMP   │ Record creation timestamp     │
+  └────────────────────┴─────────────┴──────────────────────────────┘
+
+Generate:
+
+3a. TransactionRecord.java — domain model
+  - All fields above as Java types
+  - posting_date as LocalDate
+  - transaction_amount as BigDecimal
+  - created_at as Instant
+  - Lombok @Data @Builder @NoArgsConstructor @AllArgsConstructor
+
+3b. BigQueryQueryBuilder.java
+  - Builds parameterised BigQuery SQL using QueryJobConfiguration
+  - Supports filters from ReportFilter:
+      dateFrom (LocalDate) → WHERE posting_date >= @dateFrom
+      dateTo   (LocalDate) → WHERE posting_date <= @dateTo
+      accountType (String) → WHERE account_type = @accountType
+      status      (String) → WHERE status = @status
+      transactionType (String) → WHERE transaction_type = @transactionType
+  - Supports ORDER BY posting_date DESC (default)
+  - Supports LIMIT and OFFSET for pagination
+  - Uses BigQuery named parameters (@param) — never string concatenation
+  - Method: QueryJobConfiguration build(ReportFilter filter)
+
+3c. BigQueryDataFetcherImpl.java
+  - Injects com.google.cloud.bigquery.BigQuery bean
+  - Runs the query job synchronously using bigQuery.query(config)
+  - Maps TableResult rows to List<TransactionRecord> 
+    via BigQueryResultMapper
+  - Returns ReportDataset containing:
+      List<TransactionRecord> records
+      long totalCount
+      List<FieldDefinition> schema  ← built from TableSchema
+  - Throws DataFetchException on BigQuery errors
+  - Logs query execution time at DEBUG level
+
+3d. BigQueryResultMapper.java
+  - Maps each FieldValueList row to TransactionRecord
+  - Handles null field values safely
+  - Handles NUMERIC → BigDecimal with scale 2
+  - Handles DATE → LocalDate
+  - Handles TIMESTAMP → Instant
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — DOMAIN MODELS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+4a. ReportGenerateRequest.java (Builder Pattern)
+  Fields:
+  - String reportId            @NotBlank
+  - String reportTitle         @NotBlank
+  - OutputFormat outputFormat  @NotNull  ← PDF / CSV (extensible enum)
+  - ReportFilter filters       @NotNull
+  - String requestedBy         @NotBlank ← user ID from security context
+  - String templateId          nullable  ← uses default if null
+
+4b. ReportFilter.java
+  Fields:
+  - LocalDate dateFrom
+  - LocalDate dateTo
+  - String accountType         nullable
+  - String status              nullable
+  - String transactionType     nullable
+  - int pageNumber             default 0
+  - int pageSize               default 1000
+  - String sortBy              default "posting_date"
+  - String sortDirection       default "DESC"
+
+4c. OutputFormat.java (enum — extensible for future formats)
+  Values: PDF, CSV
+  Each enum value must carry:
+  - String mimeType
+  - String fileExtension
+  - String description
+  Example:
+    PDF("application/pdf", "pdf", "Portable Document Format"),
+    CSV("text/csv", "csv", "Comma Separated Values")
+  Design note: Adding XLSX, HTML, JSON in future requires
+  ONLY adding a new enum value and a new adapter class.
+  
